@@ -1,0 +1,21 @@
+Audio8-Persian-TTS
+Copyright 2026 Armin Rahimi Darehbagh (github.com/ard9, huggingface.co/ArminRahimi)
+
+This project fine-tunes and redistributes a derivative of Audio8 TTS.
+
+Audio8 TTS (code, model weights and neural codec)
+  https://github.com/Edge0-AI/Audio8_TTS
+  https://huggingface.co/Audio8/Audio8-TTS-Preview-0.6b
+  Licensed under the Apache License, Version 2.0.
+  Upstream NOTICE: "The model architecture is inspired by the DualAR design
+  used in Fish Audio S2 Pro."
+
+Modifications in this project: the model weights were fine-tuned on Persian
+speech (see README.md for the training procedure). The codec, tokenizer and
+model code are redistributed unchanged.
+
+Training data (not redistributed here):
+  Mana-TTS, CC0-1.0, https://huggingface.co/datasets/MahtaFetrat/Mana-TTS
+  GPTInformal-Persian, CC0-1.0, https://huggingface.co/datasets/MahtaFetrat/GPTInformal-Persian
+  The dataset authors ask that the data not be used to replicate or imitate
+  the speakers' voices for malicious purposes.

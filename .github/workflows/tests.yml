@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      AUDIO8_REPO: ${{ github.workspace }}/.cache/Audio8_TTS
+      AUDIO8_COMMIT: 07e40f5d0b03fc473635ef378654bfb581027ac3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Clone Audio8_TTS at the pinned commit
+        run: |
+          git clone -q https://github.com/Edge0-AI/Audio8_TTS.git "$AUDIO8_REPO"
+          git -C "$AUDIO8_REPO" checkout -q "$AUDIO8_COMMIT"
+      - name: Install dependencies (CPU)
+        run: |
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install "transformers>=4.57.0,<5" "accelerate>=1.10" safetensors huggingface_hub \
+            soundfile numpy pyarrow num2fawords tensorboard pytest nbformat
+      - name: Run tests
+        run: pytest -q

@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.cache/
+
+# Model weights, codec, data and training outputs (keep them on Drive / Hugging Face, not in git)
+*.safetensors
+*.pth
+*.pt
+*.bin
+*.parquet
+*.npy
+*.tar
+model/
+base_model/
+work/
+outputs/
+checkpoints/
+checkpoint-*/
+runs/
+export/
+
+# Audio: only the curated demo files in samples/ are tracked
+*.wav
+*.mp3
+!samples/*.wav
+!samples/*.mp3
+
+# Secrets and editors
+.env
+*.token
+.ipynb_checkpoints/
+.DS_Store
+.idea/
+.vscode/

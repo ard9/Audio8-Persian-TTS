@@ -1,0 +1,13 @@
+# Runtime (inference and training). Install a CUDA build of PyTorch for GPU use.
+torch>=2.5.0
+torchaudio>=2.5.0
+transformers>=4.57.0,<5
+accelerate>=1.10
+safetensors>=0.4
+huggingface_hub>=0.25
+soundfile>=0.12
+numpy>=1.26
+pyarrow>=14
+num2fawords>=1.1
+bitsandbytes>=0.43; platform_system == "Linux"
+tensorboard>=2.16

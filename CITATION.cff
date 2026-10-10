@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below, together with Audio8 TTS and the Mana-TTS dataset."
+title: "Audio8-Persian-TTS: Adapting a Compact Multilingual TTS Model to Persian"
+type: software
+authors:
+  - family-names: "Rahimi Darehbagh"
+    given-names: "Armin"
+    alias: "ard9"
+repository-code: "https://github.com/ard9/Audio8-Persian-TTS"
+license: Apache-2.0
+date-released: "2026-10-10"
+keywords:
+  - text-to-speech
+  - Persian
+  - Farsi
+  - voice cloning
+  - low-resource
+  - Audio8
+references:
+  - type: software
+    title: "Audio8 TTS Preview"
+    authors:
+      - name: "Audio8 / Edge0-AI"
+    repository-code: "https://github.com/Edge0-AI/Audio8_TTS"
+    license: Apache-2.0
+  - type: conference-paper
+    title: "ManaTTS Persian: A Recipe for Creating TTS Datasets for Lower-Resource Languages"
+    authors:
+      - family-names: "Qharabagh"
+        given-names: "Mahta Fetrat"
+      - family-names: "Dehghanian"
+        given-names: "Zahra"
+      - family-names: "Rabiee"
+        given-names: "Hamid R."
+    collection-title: "Proceedings of NAACL 2025"
+    year: 2025
+    start: 9177
+    end: 9206
+    url: "https://aclanthology.org/2025.naacl-long.464/"
