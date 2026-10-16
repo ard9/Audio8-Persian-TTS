@@ -12,5 +12,5 @@ def test_committed_notebook_matches_builder():
     assert committed == module.render(), "notebook is stale: run `python scripts/build_notebook.py`"
     notebook = json.loads(committed)
     sources = ["".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"]
-    embedded = next(s for s in sources if s.startswith("%%writefile /content/fa_tools.py"))
+    embedded = next(s for s in sources if s.startswith("%%writefile fa_tools.py"))
     compile(embedded.split("\n", 1)[1], "fa_tools", "exec")

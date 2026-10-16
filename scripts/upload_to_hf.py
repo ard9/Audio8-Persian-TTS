@@ -2,12 +2,12 @@
 """Upload an exported model folder to the Hugging Face Hub with its model card.
 
 1. In the notebook, run the "Export the final model" cell. It writes a
-   standalone folder such as  MyDrive/audio8_fa/runs/<run>/export/checkpoint-N
+   standalone folder such as  /content/export/checkpoint-N
 2. Fill in the TODOs in docs/MODEL_CARD.md (results, training details).
 3. Log in once:  huggingface-cli login   (or set HF_TOKEN)
 4. Run:
     python scripts/upload_to_hf.py \
-        --export-dir /content/drive/MyDrive/audio8_fa/runs/audio8_fa_v1/export/checkpoint-N \
+        --export-dir /content/export/checkpoint-N \
         --repo-id ArminRahimi/Audio8-TTS-Persian \
         --samples-dir samples/
 """

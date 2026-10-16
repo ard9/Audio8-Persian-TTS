@@ -5,7 +5,7 @@ Examples:
     # exported folder (from the notebook's export cell) or a Hugging Face model ID
     python scripts/synthesize.py --model ArminRahimi/Audio8-TTS-Persian --text "سلام دنیا" --output hello.wav
 
-    # base model + a raw Trainer checkpoint from Google Drive
+    # base model + a raw Trainer checkpoint (e.g. downloaded from your private training repo)
     python scripts/synthesize.py --model /path/to/base_model --checkpoint /path/to/checkpoint-1200 \
         --text "سلام دنیا" --output hello.wav
 

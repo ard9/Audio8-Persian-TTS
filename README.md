@@ -46,7 +46,7 @@ The voice-clone sample uses a reference clip from GPTInformal-Persian (a second 
 
 | Path | What it is |
 |---|---|
-| [`notebooks/Audio8_Persian_Finetune.ipynb`](notebooks/Audio8_Persian_Finetune.ipynb) | One-click Colab notebook: data preparation, training, per-checkpoint audio samples, testing, export. |
+| [`notebooks/Audio8_Persian_Finetune.ipynb`](notebooks/Audio8_Persian_Finetune.ipynb) | One-click Colab notebook: data preparation, training, per-checkpoint audio samples, testing, export and upload to Hugging Face. |
 | [`src/fa_tools.py`](src/fa_tools.py) | All the logic the notebook uses (embedded into it with `%%writefile`). |
 | [`scripts/synthesize.py`](scripts/synthesize.py) | Command-line inference from an exported model, a Hugging Face ID, or a raw checkpoint. |
 | [`scripts/upload_to_hf.py`](scripts/upload_to_hf.py) | Publishes an exported model and its model card to the Hugging Face Hub. |
@@ -59,27 +59,40 @@ The voice-clone sample uses a reference clip from GPTInformal-Persian (a second 
 
 1. Click **Open in Colab** above.
 2. **Runtime → Change runtime type → GPU.** An L4 or A100 (Colab Pro) is recommended; the free T4 works but is slower.
-3. Review the settings cell, then **Runtime → Run all**.
-4. If Colab disconnects, run **Run all** again: data, checkpoints and samples live on your Google Drive and training resumes from the last complete checkpoint.
+3. Create a Hugging Face **write** token and add it to Colab's 🔑 Secrets panel as `HF_TOKEN`.
+4. Review the settings cell (set `HF_USERNAME`), then **Runtime → Run all**.
+5. If the session ends, run **Run all** again — on the same or another machine (Colab or Kaggle). Training resumes from the last checkpoint stored on the Hub.
 
-Default settings train on 10 parts of Mana-TTS (≈ 15 h). Raise `MANA_PARTS` (up to 77, ≈ 114 h) for better quality.
+Default settings train on all 77 parts of Mana-TTS (≈ 114 h). Use `MANA_PARTS = 10` (≈ 15 h) for a quick test.
+
+### Storage
+
+Everything is stored on the Hugging Face Hub; local disk is only a cache.
+
+| What | Where | Visibility |
+|---|---|---|
+| Prepared codec data | dataset repo `<user>/audio8-fa-codes` | public (Mana-TTS and GPTInformal are CC0) |
+| Checkpoints, samples, manifests | model repo `<user>/audio8-fa-training` (newest checkpoint only, history squashed) | private |
+| Final exported model | model repo `<user>/Audio8-TTS-Persian` | public |
+
+Nothing depends on one machine: any notebook with the token downloads the prepared data in seconds and resumes the run.
 
 ## 🔧 How it works
 
 ```
 Mana-TTS / GPTInformal parquet  ──►  44.1 kHz audio  ──►  Audio8 codec codes (10 × T)
-            (downloaded once)                               saved to Google Drive as one .tar per part
+            (downloaded once)                               one .tar per part on the Hugging Face Hub
                                                                        │
                      train/eval manifests (some rows with a same-speaker reference clip)
                                                                        │
-  fine-tune both DualAR branches ──► checkpoint on Drive ──► auto-generate test sentences ──► listen
+  fine-tune both DualAR branches ──► checkpoint (Hub) ──► auto-generate test sentences ──► listen
                                                                        │
                                      export standalone bf16 model ──► Hugging Face Hub
 ```
 
-- **Data is prepared once.** Each dataset part is downloaded, encoded to codec codes and stored on Drive (codes for all 114 h of Mana-TTS take < 500 MB). Later sessions restore it in seconds.
+- **Data is prepared once.** Each dataset part is downloaded, encoded to codec codes and stored as one `.tar` on the Hub; codes for all 114 h of Mana-TTS take < 300 MB. Later sessions, on any machine, download them in seconds.
 - **Persian voice cloning.** Mana-TTS rows are trained mostly without a reference (so the default voice is Mana's speaker). GPTInformal rows always use a reference clip of the same speaker, teaching the model to clone voices in Persian.
-- **Robust on Colab.** Incomplete checkpoints from a disconnect are detected and skipped; old checkpoints are rotated by step number and removed from Drive's trash so storage does not fill up.
+- **Robust on Colab.** Incomplete checkpoints from a disconnect are detected and skipped. Each checkpoint is backed up to a private Hub repo where only the newest is kept (history squashed so storage does not grow).
 
 ### Fixes to the upstream SFT pipeline
 

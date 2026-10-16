@@ -6,7 +6,7 @@ __pycache__/
 venv/
 .cache/
 
-# Model weights, codec, data and training outputs (keep them on Drive / Hugging Face, not in git)
+# Model weights, codec, data and training outputs (keep them on Hugging Face, not in git)
 *.safetensors
 *.pth
 *.pt

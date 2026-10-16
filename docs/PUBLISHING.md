@@ -17,16 +17,9 @@ Create the empty repository `Audio8-Persian-TTS` on GitHub first (no README, no 
 ## 2. After training
 
 1. Fill the **Results** and **Limitations** sections in `README.md` / `README_fa.md` and the **Training details** and **Evaluation** sections in `docs/MODEL_CARD.md`.
-2. Copy a few demo files from Drive into `samples/` (see `samples/README.md`).
-3. In the notebook, run the **Export** cell, then upload the model:
-
-```bash
-huggingface-cli login
-python scripts/upload_to_hf.py \
-    --export-dir "/content/drive/MyDrive/audio8_fa/runs/audio8_fa_v1/export/checkpoint-N" \
-    --repo-id ArminRahimi/Audio8-TTS-Persian \
-    --samples-dir samples/
-```
+2. Copy a few demo files into `samples/` (see `samples/README.md`).
+3. In the notebook, run the **Export** cell and then the **Upload the exported model to Hugging Face** cell.
+   (Alternatively, from any machine: `python scripts/upload_to_hf.py --export-dir <export>/checkpoint-N --repo-id ArminRahimi/Audio8-TTS-Persian --samples-dir samples/`.)
 
 4. Commit and push the updated READMEs and samples.
 
@@ -43,4 +36,4 @@ CI runs the same tests on every push and fails if the notebook is out of sync.
 
 ## 4. Never commit
 
-Model weights, `codec.pth`, checkpoints, prepared data, Hugging Face tokens or Drive paths with personal information. `.gitignore` already excludes the common ones.
+Model weights, `codec.pth`, checkpoints, prepared data, Hugging Face tokens or local paths with personal information. `.gitignore` already excludes the common ones.

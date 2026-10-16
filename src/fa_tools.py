@@ -1,10 +1,10 @@
-"""Persian (Farsi) fine-tuning helpers for Audio8 TTS on Google Colab.
+"""Persian (Farsi) fine-tuning helpers for Audio8 TTS (Colab, Kaggle or any GPU machine).
 
-Everything that needs to survive a Colab disconnect lives on Google Drive:
-prepared codec data (one .tar per dataset shard), the train/eval manifests,
-Trainer checkpoints and the audio samples written after every checkpoint.
-Each step checks Drive first, so re-running the notebook resumes instead of
-starting over.
+Everything that needs to survive the end of a session lives on the Hugging Face
+Hub: prepared codec data (one .tar per dataset part, in a dataset repo) and the
+train/eval manifests, checkpoints and audio samples (in a private model repo).
+Local disk is only a cache, so re-running the notebook on any machine resumes
+instead of starting over.
 """
 
 from __future__ import annotations
@@ -217,9 +217,204 @@ def hf_token() -> str | None:
     try:  # Colab secrets panel (key icon) -> HF_TOKEN
         from google.colab import userdata  # type: ignore
 
-        return userdata.get("HF_TOKEN")
+        token = userdata.get("HF_TOKEN")
+        if token:
+            return token
+    except Exception:
+        pass
+    try:  # Kaggle: Add-ons -> Secrets -> HF_TOKEN
+        from kaggle_secrets import UserSecretsClient  # type: ignore
+
+        return UserSecretsClient().get_secret("HF_TOKEN")
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Hugging Face Hub storage (data + checkpoints), so any machine can resume
+# ---------------------------------------------------------------------------
+
+DATA_CARD = """---
+license: cc0-1.0
+language:
+  - fa
+task_categories:
+  - text-to-speech
+tags:
+  - persian
+  - farsi
+  - audio8
+  - codec-codes
+pretty_name: Mana-TTS + GPTInformal as Audio8 codec codes
+---
+
+# Persian speech as Audio8 codec codes
+
+Pre-encoded training data for [Audio8-Persian-TTS](https://github.com/ard9/Audio8-Persian-TTS):
+each `shards/*.tar` holds one part of a source dataset, converted to Audio8 TTS codec indices
+(`[10, T]` int16 arrays, ~21.5 frames per second) plus a JSONL manifest with the normalized text.
+Using these files skips downloading and encoding the raw audio.
+
+Sources (both CC0-1.0):
+- [Mana-TTS](https://huggingface.co/datasets/MahtaFetrat/Mana-TTS) — Qharabagh et al., NAACL 2025
+- [GPTInformal-Persian](https://huggingface.co/datasets/MahtaFetrat/GPTInformal-Persian)
+
+The codes can be decoded back to audio with the Audio8 codec, so the original speakers' voices are
+contained here. As requested by the dataset authors, do not use this data to imitate the speakers'
+voices for malicious purposes.
+"""
+
+
+class HubStore:
+    """Keeps prepared data (dataset repo) and training checkpoints (model repo) on the Hub.
+
+    * data repo (public by default): ``shards/<shard>.tar``, ``refs.json``, ``refs/*.wav``
+    * training repo (private): ``runs/<run>/checkpoints/checkpoint-N``, ``runs/<run>/samples``,
+      ``runs/<run>/manifests``. Only the newest checkpoint is kept and the git history is squashed
+      so old weights do not keep using storage.
+    """
+
+    def __init__(self, data_repo: str, train_repo: str, token: str | None = None,
+                 data_private: bool = False, api: Any = None):
+        if api is None:
+            from huggingface_hub import HfApi
+
+            token = token or hf_token()
+            if not token:
+                raise RuntimeError("HF_TOKEN not found: add a Hugging Face write token to the Secrets panel")
+            api = HfApi(token=token)
+        self.api = api
+        self.data_repo = data_repo
+        self.train_repo = train_repo
+        self.api.create_repo(data_repo, repo_type="dataset", private=data_private, exist_ok=True)
+        self.api.create_repo(train_repo, repo_type="model", private=True, exist_ok=True)
+        self._data_files: set[str] | None = None
+
+    # -- helpers
+    def _retry(self, what: str, fn: Callable[[], Any], attempts: int = 3) -> Any:
+        for attempt in range(1, attempts + 1):
+            try:
+                return fn()
+            except Exception as exc:
+                if attempt == attempts:
+                    raise
+                log(f"{what} failed ({type(exc).__name__}: {exc}); retrying in {10 * attempt}s")
+                time.sleep(10 * attempt)
+
+    def data_files(self, refresh: bool = False) -> set[str]:
+        if self._data_files is None or refresh:
+            self._data_files = set(self.api.list_repo_files(self.data_repo, repo_type="dataset"))
+        return self._data_files
+
+    def train_files(self) -> list[str]:
+        return list(self.api.list_repo_files(self.train_repo, repo_type="model"))
+
+    # -- data
+    def has_data(self, path: str) -> bool:
+        return path in self.data_files()
+
+    def download_data(self, path: str, data_dir: Path) -> Path:
+        local = self._retry(f"download {path}", lambda: self.api.hf_hub_download(
+            repo_id=self.data_repo, filename=path, repo_type="dataset", local_dir=str(data_dir)))
+        return Path(local)
+
+    def upload_data(self, local: Path, path: str, message: str | None = None) -> None:
+        self._retry(f"upload {path}", lambda: self.api.upload_file(
+            path_or_fileobj=str(local), path_in_repo=path, repo_id=self.data_repo,
+            repo_type="dataset", commit_message=message or f"Add {path}"))
+        self.data_files().add(path)
+
+    def ensure_data_card(self) -> None:
+        if "README.md" not in self.data_files():
+            self.api.upload_file(path_or_fileobj=DATA_CARD.encode("utf-8"), path_in_repo="README.md",
+                                 repo_id=self.data_repo, repo_type="dataset", commit_message="Add dataset card")
+            self.data_files().add("README.md")
+
+    def pull_refs(self, data_dir: Path) -> None:
+        for path in sorted(self.data_files()):
+            if (path == "refs.json" or path.startswith("refs/")) and not (data_dir / path).is_file():
+                self.download_data(path, data_dir)
+
+    def push_refs(self, data_dir: Path, refs: list[dict[str, Any]]) -> None:
+        for ref in refs:
+            rel = f"refs/{Path(ref['audio']).name}"
+            if not self.has_data(rel) and (data_dir / rel).is_file():
+                self.upload_data(data_dir / rel, rel)
+        if (data_dir / "refs.json").is_file():
+            self.upload_data(data_dir / "refs.json", "refs.json", "Update refs.json")
+
+    # -- runs (private training repo)
+    def push_run_files(self, run: str, local_dir: Path, subdir: str) -> None:
+        if not local_dir.is_dir():
+            return
+        self._retry(f"upload {subdir}", lambda: self.api.upload_folder(
+            folder_path=str(local_dir), path_in_repo=f"runs/{run}/{subdir}", repo_id=self.train_repo,
+            repo_type="model", commit_message=f"{run}: update {subdir}"))
+
+    def pull_run_files(self, run: str, subdir: str, local_dir: Path) -> bool:
+        prefix = f"runs/{run}/{subdir}/"
+        wanted = [f for f in self.train_files() if f.startswith(prefix)]
+        if not wanted:
+            return False
+        staging = local_dir.parent / f".hub_{local_dir.name}"
+        self._retry(f"download {subdir}", lambda: self.api.snapshot_download(
+            repo_id=self.train_repo, repo_type="model", allow_patterns=[prefix + "*"], local_dir=str(staging)))
+        source = staging / "runs" / run / subdir
+        local_dir.mkdir(parents=True, exist_ok=True)
+        for item in source.rglob("*"):
+            if item.is_file():
+                target = local_dir / item.relative_to(source)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(item), target)
+        shutil.rmtree(staging, ignore_errors=True)
+        return True
+
+    def remote_checkpoints(self, run: str) -> list[int]:
+        pattern = re.compile(rf"^runs/{re.escape(run)}/checkpoints/checkpoint-(\d+)/trainer_state\.json$")
+        return sorted(int(m.group(1)) for f in self.train_files() if (m := pattern.match(f)))
+
+    def push_checkpoint(self, run: str, checkpoint: Path) -> None:
+        log(f"uploading {checkpoint.name} to {self.train_repo} ...")
+        started = time.time()
+        self._retry(f"upload {checkpoint.name}", lambda: self.api.upload_folder(
+            folder_path=str(checkpoint), path_in_repo=f"runs/{run}/checkpoints/{checkpoint.name}",
+            repo_id=self.train_repo, repo_type="model", commit_message=f"{run}: {checkpoint.name}"))
+        log(f"uploaded {checkpoint.name} in {(time.time() - started) / 60:.1f} min")
+
+    def prune_checkpoints(self, run: str, keep: int = 1) -> list[int]:
+        steps = self.remote_checkpoints(run)
+        removed = steps[: max(0, len(steps) - max(1, keep))]
+        for step in removed:
+            self.api.delete_folder(path_in_repo=f"runs/{run}/checkpoints/checkpoint-{step}",
+                                   repo_id=self.train_repo, repo_type="model",
+                                   commit_message=f"{run}: remove checkpoint-{step}")
+        if removed:  # without squashing, deleted weights stay in git history and keep using storage
+            try:
+                self.api.super_squash_history(repo_id=self.train_repo, repo_type="model")
+            except Exception as exc:
+                log(f"could not squash history ({type(exc).__name__}: {exc})")
+        return removed
+
+    def download_latest_checkpoint(self, run: str, output_dir: Path) -> Path | None:
+        steps = self.remote_checkpoints(run)
+        if not steps:
+            return None
+        name = f"checkpoint-{steps[-1]}"
+        log(f"downloading {name} from {self.train_repo} ...")
+        self.pull_run_files(run, f"checkpoints/{name}", Path(output_dir) / name)
+        return Path(output_dir) / name
+
+
+def load_refs(data_dir: str | Path) -> list[dict[str, Any]]:
+    """refs.json with audio paths resolved for this machine (older files stored absolute paths)."""
+    data_dir = Path(data_dir)
+    path = data_dir / "refs.json"
+    refs = json.loads(path.read_text("utf-8")) if path.is_file() else []
+    for ref in refs:
+        audio = Path(ref["audio"])
+        if not (audio.is_absolute() and audio.is_file()):
+            ref["audio"] = str(data_dir / "refs" / audio.name)
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +599,7 @@ def _download(repo: str, filename: str, target_dir: Path) -> Path:
     return Path(path)
 
 
-def _copy_to_drive(local: Path, final: Path) -> None:
+def _atomic_copy(local: Path, final: Path) -> None:
     final.parent.mkdir(parents=True, exist_ok=True)
     partial_path = final.with_name(final.name + ".partial")
     shutil.copyfile(local, partial_path)
@@ -429,21 +624,29 @@ def prepare_shard(
     dataset: str,
     filename: str,
     work_dir: Path,
-    drive_data_dir: Path,
+    data_dir: Path,
     options: PrepOptions,
     refs: list[dict[str, Any]],
+    hub: HubStore | None = None,
 ) -> dict[str, float]:
-    """Download one parquet part, encode it, and store a tar on Drive."""
+    """Download one parquet part, encode it, and store a tar in data_dir (and on the Hub)."""
     import soundfile as sf
 
     shard = _shard_name(dataset, filename)
-    tar_on_drive = drive_data_dir / "shards" / f"{shard}.tar"
+    tar_cached = data_dir / "shards" / f"{shard}.tar"
     local_manifest = work_dir / "shards" / f"{shard}.jsonl"
     if local_manifest.is_file():
         return {"status": "local"}
-    if tar_on_drive.is_file():
-        _extract_shard(tar_on_drive, work_dir)
+    hub_path = f"shards/{shard}.tar"
+    if tar_cached.is_file():
+        _extract_shard(tar_cached, work_dir)
+        if hub is not None and not hub.has_data(hub_path):  # cached locally but missing on the Hub
+            hub.upload_data(tar_cached, hub_path)
+            return {"status": "restored, uploaded to Hub"}
         return {"status": "restored"}
+    if hub is not None and hub.has_data(hub_path):
+        _extract_shard(hub.download_data(hub_path, data_dir), work_dir)
+        return {"status": "downloaded from Hub"}
 
     started = time.time()
     spec = DATASETS[dataset]
@@ -490,11 +693,11 @@ def prepare_shard(
                     }
                 )
                 if ref_count < options.refs_per_dataset and 4.0 <= seconds <= 9.0:
-                    ref_dir = drive_data_dir / "refs"
+                    ref_dir = data_dir / "refs"
                     ref_dir.mkdir(parents=True, exist_ok=True)
                     ref_path = ref_dir / f"{sample_id}.wav"
                     sf.write(ref_path, wave, CODEC_SAMPLE_RATE)
-                    refs.append({"dataset": dataset, "id": sample_id, "text": text, "audio": str(ref_path)})
+                    refs.append({"dataset": dataset, "id": sample_id, "text": text, "audio": f"refs/{ref_path.name}"})
                     ref_count += 1
         pending.clear()
 
@@ -531,8 +734,10 @@ def prepare_shard(
     with tarfile.open(local_tar, "w") as handle:
         handle.add(work_dir / codes_rel, arcname=codes_rel.as_posix())
         handle.add(local_manifest, arcname=f"shards/{shard}.jsonl")
-    _copy_to_drive(local_tar, tar_on_drive)
+    _atomic_copy(local_tar, tar_cached)
     local_tar.unlink(missing_ok=True)
+    if hub is not None:
+        hub.upload_data(tar_cached, hub_path)
     parquet.unlink(missing_ok=True)
     hours = sum(r["seconds"] for r in rows) / 3600
     return {
@@ -547,14 +752,24 @@ def prepare_shard(
 def prepare_all(
     base_dir: str | Path,
     work_dir: str | Path,
-    drive_data_dir: str | Path,
+    data_dir: str | Path,
     plan: dict[str, int],
     options: PrepOptions | None = None,
+    hub: HubStore | None = None,
 ) -> None:
-    """plan maps dataset name -> number of parquet parts to use (from the start)."""
+    """plan maps dataset name -> number of parquet parts to use (from the start).
+
+    data_dir is a local cache with one .tar per prepared part.
+    With a HubStore, parts already on the Hub are downloaded instead of re-encoded, and newly
+    prepared parts are uploaded.
+    """
     options = options or PrepOptions()
-    work_dir, drive_data_dir = Path(work_dir), Path(drive_data_dir)
-    refs_path = drive_data_dir / "refs.json"
+    work_dir, data_dir = Path(work_dir), Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    if hub is not None:
+        hub.ensure_data_card()
+        hub.pull_refs(data_dir)
+    refs_path = data_dir / "refs.json"
     refs: list[dict[str, Any]] = json.loads(refs_path.read_text("utf-8")) if refs_path.is_file() else []
     holder: dict[str, CodecEncoder] = {}
 
@@ -567,10 +782,12 @@ def prepare_all(
     jobs = [(name, f) for name, count in plan.items() for f in DATASETS[name]["files"][: max(0, count)]]
     try:
         for index, (dataset, filename) in enumerate(jobs, 1):
-            result = prepare_shard(get_encoder, dataset, filename, work_dir, drive_data_dir, options, refs)
+            result = prepare_shard(get_encoder, dataset, filename, work_dir, data_dir, options, refs, hub)
             log(f"[{index}/{len(jobs)}] {_shard_name(dataset, filename)}: {result}")
             if result.get("status") == "prepared":
                 refs_path.write_text(json.dumps(refs, ensure_ascii=False, indent=1), "utf-8")
+                if hub is not None:
+                    hub.push_refs(data_dir, refs)
     finally:
         if "encoder" in holder:
             holder["encoder"].close()
@@ -578,6 +795,9 @@ def prepare_all(
     for manifest in sorted((work_dir / "shards").glob("*.jsonl")):
         with manifest.open(encoding="utf-8") as handle:
             total += sum(json.loads(line)["seconds"] for line in handle if line.strip())
+    if hub is not None and refs and not hub.has_data("refs.json"):
+        refs_path.write_text(json.dumps(refs, ensure_ascii=False, indent=1), "utf-8")
+        hub.push_refs(data_dir, refs)
     log(f"data ready: {total / 3600:.1f} hours of audio")
 
 
@@ -590,7 +810,7 @@ def build_manifests(
     base_dir: str | Path,
     repo_dir: str | Path,
     work_dir: str | Path,
-    drive_data_dir: str | Path,
+    data_dir: str | Path,
     plan: dict[str, int],
     max_length: int = 1024,
     eval_size: int = 200,
@@ -599,33 +819,37 @@ def build_manifests(
     seed: int = 1234,
     rebuild: bool = False,
     manifest_dir: str | Path | None = None,
+    hub: HubStore | None = None,
+    run: str | None = None,
 ) -> tuple[Path, Path]:
     """Build train/eval JSONL files in the repo's prepared format.
 
     Rows from datasets in ``always_reference`` are trained with a reference clip
     of the same speaker, so the default (no-reference) voice stays Mana's while
     the model also learns Persian voice cloning. The manifests are stored on
-    Drive and reused, keeping the sample order identical across sessions.
+    on the Hub and reused, keeping the sample order identical across sessions.
     """
     import torch
 
     add_repo_to_path(repo_dir)
     from audio8_tts_data import build_sft_example, load_codes
 
-    work_dir, drive_data_dir = Path(work_dir), Path(drive_data_dir)
-    drive_manifests = Path(manifest_dir) if manifest_dir else drive_data_dir / "manifests"
+    work_dir, data_dir = Path(work_dir), Path(data_dir)
+    manifests_dir = Path(manifest_dir) if manifest_dir else data_dir / "manifests"
     train_path, eval_path = work_dir / "train.jsonl", work_dir / "eval.jsonl"
     plan_key = json.dumps({"plan": plan, "max_length": max_length, "ref": reference_prob}, sort_keys=True)
-    plan_file = drive_manifests / "plan.json"
+    plan_file = manifests_dir / "plan.json"
+    if hub is not None and run and not rebuild and not plan_file.is_file():
+        hub.pull_run_files(run, "manifests", manifests_dir)
     if (
         not rebuild
         and plan_file.is_file()
         and plan_file.read_text("utf-8") == plan_key
-        and (drive_manifests / "train.jsonl").is_file()
+        and (manifests_dir / "train.jsonl").is_file()
     ):
-        shutil.copyfile(drive_manifests / "train.jsonl", train_path)
-        shutil.copyfile(drive_manifests / "eval.jsonl", eval_path)
-        log("reused manifests from Drive (same data plan)")
+        shutil.copyfile(manifests_dir / "train.jsonl", train_path)
+        shutil.copyfile(manifests_dir / "eval.jsonl", eval_path)
+        log("reused saved manifests (same data plan)")
         return train_path, eval_path
 
     wanted = {_shard_name(n, f) for n, c in plan.items() for f in DATASETS[n]["files"][:c]}
@@ -694,10 +918,12 @@ def build_manifests(
         with path.open("w", encoding="utf-8") as handle:
             for item in items:
                 handle.write(json.dumps(item, ensure_ascii=False) + "\n")
-    drive_manifests.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(train_path, drive_manifests / "train.jsonl")
-    shutil.copyfile(eval_path, drive_manifests / "eval.jsonl")
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(train_path, manifests_dir / "train.jsonl")
+    shutil.copyfile(eval_path, manifests_dir / "eval.jsonl")
     plan_file.write_text(plan_key, "utf-8")
+    if hub is not None and run:
+        hub.push_run_files(run, manifests_dir, "manifests")
     with_ref = sum(1 for r in final_rows if "reference_codes" in r)
     log(
         f"manifests: train={len(train_rows)} eval={len(eval_rows)} "
@@ -843,7 +1069,7 @@ def write_samples(
 
 
 # ---------------------------------------------------------------------------
-# Checkpoints on Drive
+# Local checkpoints
 # ---------------------------------------------------------------------------
 
 
@@ -892,84 +1118,13 @@ def find_resume_checkpoint(output_dir: str | Path) -> Path | None:
 
 
 def rotate_checkpoints(output_dir: str | Path, keep: int) -> list[str]:
-    """Delete older checkpoints by step number (Trainer's mtime ordering is unsafe on Drive)."""
+    """Delete older local checkpoints by step number."""
     complete = [(s, p) for s, p in list_checkpoints(output_dir) if checkpoint_is_complete(p)]
     removed = []
     for _step, path in complete[: max(0, len(complete) - max(1, keep))]:
         shutil.rmtree(path, ignore_errors=True)
         removed.append(path.name)
     return removed
-
-
-class DriveTrashPurger:
-    """Permanently delete checkpoint folders that Colab's Drive mount moved to the trash.
-
-    Files deleted through /content/drive go to Google Drive's trash and keep
-    using storage for 30 days. This only touches trashed folders named
-    checkpoint-N / broken-checkpoint-N whose parent is this run's checkpoint folder.
-    """
-
-    NAME_RE = re.compile(r"^(broken-)?checkpoint-\d+(-\d+)?$")
-
-    def __init__(self, folder_under_my_drive: str):
-        self.relative = folder_under_my_drive.strip("/")
-        self.service = None
-        self.folder_id: str | None = None
-        self.disabled = False
-
-    def _setup(self) -> bool:
-        if self.disabled:
-            return False
-        if self.service is not None and self.folder_id:
-            return True
-        try:
-            from googleapiclient.discovery import build  # type: ignore
-
-            self.service = build("drive", "v3", cache_discovery=False)
-            parent = "root"
-            for name in [p for p in self.relative.split("/") if p]:
-                escaped = name.replace("\\", "\\\\").replace("'", "\\'")
-                result = self.service.files().list(
-                    q=(
-                        f"name = '{escaped}' and '{parent}' in parents and trashed = false "
-                        "and mimeType = 'application/vnd.google-apps.folder'"
-                    ),
-                    fields="files(id, name)",
-                    pageSize=10,
-                ).execute()
-                files = result.get("files", [])
-                if len(files) != 1:
-                    log(f"trash cleanup disabled: could not uniquely find folder {name!r}")
-                    self.disabled = True
-                    return False
-                parent = files[0]["id"]
-            self.folder_id = parent
-            return True
-        except Exception as exc:
-            log(f"trash cleanup disabled ({type(exc).__name__}: {exc})")
-            self.disabled = True
-            return False
-
-    def purge(self) -> int:
-        if not self._setup():
-            return 0
-        removed = 0
-        try:
-            result = self.service.files().list(
-                q=f"'{self.folder_id}' in parents and trashed = true",
-                fields="files(id, name, mimeType)",
-                pageSize=100,
-            ).execute()
-            for item in result.get("files", []):
-                if item.get("mimeType") != "application/vnd.google-apps.folder":
-                    continue
-                if not self.NAME_RE.match(item.get("name", "")):
-                    continue
-                self.service.files().delete(fileId=item["id"]).execute()
-                removed += 1
-        except Exception as exc:
-            log(f"trash cleanup failed: {type(exc).__name__}: {exc}")
-        return removed
 
 
 # ---------------------------------------------------------------------------
@@ -1008,9 +1163,8 @@ class TrainConfig:
     repo_dir: str
     train_jsonl: str
     eval_jsonl: str | None
-    output_dir: str  # on Drive
-    samples_dir: str  # on Drive
-    drive_folder_for_trash: str | None  # checkpoints folder relative to MyDrive, or None
+    output_dir: str  # local checkpoint folder (a cache when the Hub is used)
+    samples_dir: str  # local samples folder (mirrored to the Hub)
     precision: str = "auto"  # auto | bf16 | fp16 | fp32
     batch_size: int = 0  # 0 = auto
     grad_accum: int = 0  # 0 = auto
@@ -1029,6 +1183,9 @@ class TrainConfig:
     logging_steps: int = 20
     num_workers: int = 2
     seed: int = 1234
+    hub: Any = None  # HubStore: back up every checkpoint and the samples to the Hub
+    hub_run: str | None = None
+    hub_keep: int = 1
 
 
 def _resolve_training_settings(cfg: TrainConfig) -> dict[str, Any]:
@@ -1130,7 +1287,6 @@ def train(cfg: TrainConfig) -> Path | None:
         save_safetensors=True,
     )
 
-    trash = DriveTrashPurger(cfg.drive_folder_for_trash) if cfg.drive_folder_for_trash else None
     reference = cfg.clone_reference if cfg.clone_reference and Path(cfg.clone_reference["audio"]).is_file() else None
 
     class SampleAndRotate(TrainerCallback):
@@ -1160,9 +1316,16 @@ def train(cfg: TrainConfig) -> Path | None:
                 handle.write(json.dumps({"step": step, "eval_loss": eval_loss, "samples": records,
                                          "time": time.strftime("%Y-%m-%d %H:%M")}, ensure_ascii=False) + "\n")
             removed = rotate_checkpoints(args.output_dir, cfg.keep_checkpoints)
-            purged = trash.purge() if trash else 0
-            log(f"checkpoint-{step} saved to Drive" + (f"; removed {removed}" if removed else "")
-                + (f"; emptied {purged} from Drive trash" if purged else ""))
+            if cfg.hub is not None and cfg.hub_run:
+                try:
+                    cfg.hub.push_checkpoint(cfg.hub_run, Path(args.output_dir) / f"checkpoint-{step}")
+                    cfg.hub.push_run_files(cfg.hub_run, samples_dir, "samples")
+                    pruned = cfg.hub.prune_checkpoints(cfg.hub_run, cfg.hub_keep)
+                    if pruned:
+                        log(f"removed old Hub checkpoints {pruned}")
+                except Exception as exc:  # a failed upload must not stop training
+                    log(f"Hub backup failed at step {step}: {type(exc).__name__}: {exc}")
+            log(f"checkpoint-{step} saved" + (f"; removed local {removed}" if removed else ""))
             return control
 
     trainer = sft.Audio8TTSTrainer(
@@ -1182,11 +1345,17 @@ def train(cfg: TrainConfig) -> Path | None:
     steps_per_epoch = math.ceil(len(train_dataset) / (settings["batch_size"] * settings["grad_accum"]))
     total_steps = math.ceil(steps_per_epoch * cfg.epochs)
     resume = find_resume_checkpoint(output_dir)
+    if cfg.hub is not None and cfg.hub_run:
+        remote = cfg.hub.remote_checkpoints(cfg.hub_run)
+        local_step = int(resume.name.split("-")[1]) if resume else -1
+        if remote and remote[-1] > local_step:
+            cfg.hub.download_latest_checkpoint(cfg.hub_run, output_dir)
+            resume = find_resume_checkpoint(output_dir)
     log(
         f"train clips={len(train_dataset)} | steps/epoch={steps_per_epoch} | total steps={total_steps} | "
         f"checkpoint every {cfg.save_steps} steps"
     )
-    log(f"resuming from {resume.name}" if resume else "no checkpoint on Drive yet; starting fresh")
+    log(f"resuming from {resume.name}" if resume else "no checkpoint yet; starting fresh")
 
     trainer.train(resume_from_checkpoint=str(resume) if resume else None)
 
