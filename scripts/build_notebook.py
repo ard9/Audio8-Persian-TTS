@@ -144,7 +144,84 @@ if int(transformers.__version__.split(".")[0]) >= 5:
     print("⚠️ An older transformers is required: Runtime → Restart session, then Run all again.")
 ''', title=True)
 
-code("%%writefile fa_tools.py\n" + TOOLS)
+SECTION = "# ---------------------------------------------------------------------------\n# "
+
+# src/fa_tools.py is written to disk in several cells, one per section, each with
+# a short explanation. The first cell creates the file (%%writefile) and the
+# others append to it (%%writefile -a), so the result is identical to the source.
+# Each entry: (text that starts the chunk, explanation shown before the cell).
+TOOLS_PARTS = [
+    ("", """
+**Part 1 — Imports and dataset list.** Starts `fa_tools.py`: the Python imports, audio constants (44.1 kHz, ≈ 21.5 codec frames per second) and the Hugging Face repos/files of Mana-TTS and GPTInformal.
+"""),
+    (SECTION + "Persian text normalization", """
+**Part 2 — Persian text normalization.** Unifies Arabic/Persian letters, removes diacritics and invisible characters (incl. ZWNJ), spells out numbers as Persian words and splits long text into sentences. The same function is used for training and testing, so the model always sees text in the same form.
+"""),
+    (SECTION + "Environment helpers", """
+**Part 3 — Environment helpers.** Detects the GPU and picks precision, batch size and gradient accumulation for it; loads the Audio8 model, processor and config; reads the `HF_TOKEN` secret.
+"""),
+    (SECTION + "Hugging Face Hub storage", """
+**Part 4 — Hugging Face Hub storage.** The `HubStore` class uploads/downloads prepared data parts, manifests, checkpoints and audio samples, so training can resume on any machine. It also deletes old checkpoints on the Hub.
+"""),
+    (SECTION + "Reading the Mana-TTS", """
+**Part 5 — Reading the dataset files.** Reads the parquet files row by row (low memory), decodes the audio and resamples it to 44.1 kHz mono.
+"""),
+    (SECTION + "Codec encoding", """
+**Part 6 — Codec encoder.** `CodecEncoder` turns waveforms into Audio8 codec codes (the "audio tokens" the model learns to generate). `PrepOptions` holds the data filters (min/max length, high-quality only).
+"""),
+    ("def prepare_shard(", """
+**Part 7 — Data preparation per part.** `prepare_shard` encodes one dataset part and packs it into a `.tar` on the Hub (or just downloads it if it already exists). `prepare_all` does this for every part and skips finished ones after a disconnect.
+"""),
+    (SECTION + "Manifests", """
+**Part 8 — Manifests.** Builds the train/eval `.jsonl` lists (text + codec file per clip). Some clips get a short reference clip of the same speaker, so the model also learns voice cloning. Clips that don't fit in `MAX_LENGTH` tokens are dropped, and a seeded shuffle sets aside up to 200 clips for evaluation.
+"""),
+    (SECTION + "Speech generation", """
+**Part 9 — Speech generation.** `synthesize` turns text (and optionally a reference voice) into audio; `write_samples` saves and plays the test sentences after each checkpoint.
+"""),
+    (SECTION + "Local checkpoints", """
+**Part 10 — Local checkpoints.** Lists checkpoints, checks that a checkpoint was saved completely, finds the one to resume from, and removes older ones.
+"""),
+    (SECTION + "Training", """
+**Part 11 — Training: memory saving.** Activation (gradient) checkpointing for the slow AR layers: it uses less GPU memory at the cost of some extra compute.
+"""),
+    ("@dataclass\nclass TrainConfig:", """
+**Part 12 — Training settings.** `TrainConfig` holds all training options. **Warmup:** `warmup_ratio = 0.03` — the learning rate rises from 0 to `LEARNING_RATE` during the first 3% of steps, then decreases along a cosine curve. On resume the scheduler state is restored, so warmup is not repeated. `_resolve_training_settings` fills in the automatic values (precision, batch size, 8-bit Adam).
+"""),
+    ("def train(cfg: TrainConfig)", """
+**Part 13 — The training loop.** `train()` loads the model with fp32 master weights, builds the datasets and the Hugging Face `Trainer` (cosine schedule with warmup, AdamW, gradient clipping at 1.0), and adds a callback that, after every checkpoint, generates test audio, rotates old checkpoints and backs everything up to the Hub. It resumes from the newest checkpoint (local or Hub) automatically.
+"""),
+    (SECTION + "Testing and export", """
+**Part 14 — Testing and export.** Picks a checkpoint (`latest`, a step number or `base`), loads it for inference, and exports a standalone bf16 model folder for upload.
+"""),
+]
+
+
+def split_tools(text):
+    """Split src/fa_tools.py at the markers in TOOLS_PARTS (each must occur once, in order)."""
+    starts = []
+    for marker, _ in TOOLS_PARTS:
+        if not marker:
+            starts.append(0)
+            continue
+        if text.count(marker) != 1:
+            raise SystemExit(f"marker not found exactly once in src/fa_tools.py: {marker!r}")
+        starts.append(text.index(marker))
+    if starts != sorted(starts):
+        raise SystemExit("TOOLS_PARTS markers are out of order")
+    return [text[a:b] for a, b in zip(starts, starts[1:] + [len(text)])]
+
+
+md("""
+## 🧰 Helper library (`fa_tools.py`)
+
+The next cells write the project's helper library, `fa_tools.py`, to disk, one section per cell. They only save code (nothing runs yet), so they finish instantly. Run them all, in order: the first cell creates the file and the rest add to it.
+""")
+for i, ((_, explanation), chunk) in enumerate(zip(TOOLS_PARTS, split_tools(TOOLS))):
+    md(explanation)
+    # Not via code(): the chunk keeps its trailing newlines so the joined file matches the source exactly.
+    magic = "%%writefile fa_tools.py\n" if i == 0 else "%%writefile -a fa_tools.py\n"
+    cells.append({"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
+                  "source": magic + chunk})
 
 code('''
 #@title ⬇️ Download the Audio8 base model (≈ 2.5 GB) and connect the Hub

@@ -12,5 +12,9 @@ def test_committed_notebook_matches_builder():
     assert committed == module.render(), "notebook is stale: run `python scripts/build_notebook.py`"
     notebook = json.loads(committed)
     sources = ["".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"]
-    embedded = next(s for s in sources if s.startswith("%%writefile fa_tools.py"))
-    compile(embedded.split("\n", 1)[1], "fa_tools", "exec")
+    parts = [s for s in sources if s.startswith(("%%writefile fa_tools.py", "%%writefile -a fa_tools.py"))]
+    assert parts[0].startswith("%%writefile fa_tools.py\n"), "the first part must create the file"
+    assert all(p.startswith("%%writefile -a fa_tools.py\n") for p in parts[1:]), "later parts must append"
+    embedded = "".join(p.split("\n", 1)[1] for p in parts)
+    assert embedded == (ROOT / "src" / "fa_tools.py").read_text(encoding="utf-8")
+    compile(embedded, "fa_tools", "exec")
