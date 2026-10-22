@@ -15,31 +15,30 @@ To our knowledge (checked October 2026), this is the **first public Persian adap
 
 ## 🔊 Samples
 
-All samples come from the v0.1 run (step 1257); none are cherry-picked: each is the single fixed-seed sample generated automatically after the checkpoint was saved.
+The fine-tuned and voice-clone samples come from the v0.2 run (step 7000, the published model). None are cherry-picked: each is the single fixed-seed sample generated automatically after the checkpoint was saved.
 
-| Text | Base model (before) | Fine-tuned (step 1257) | Voice clone (step 1257) |
+| Text | Base model (before) | Fine-tuned (step 7000) | Voice clone (step 7000) |
 |---|---|---|---|
 | سلام، امروز هوا خیلی خوب است و می‌خواهم کمی در پارک قدم بزنم. | [base_s01.wav](samples/base_s01.wav) | [ft_s01.wav](samples/ft_s01.wav) | [clone_s01.wav](samples/clone_s01.wav) |
 | این یک آزمایش برای سنجش کیفیت مدل تبدیل متن به گفتار فارسی است. | [base_s02.wav](samples/base_s02.wav) | [ft_s02.wav](samples/ft_s02.wav) | — |
 | دیروز با دوستام رفتیم سینما، فیلمش واقعاً عالی بود! | — | [ft_s03.wav](samples/ft_s03.wav) | — |
 
-**Training progression** (sentence 1 at each checkpoint): [step 300](samples/progress_step0300.wav) · [step 600](samples/progress_step0600.wav) · [step 900](samples/progress_step0900.wav) · [step 1200](samples/progress_step1200.wav) · [step 1257 (final)](samples/ft_s01.wav)
+**Earlier v0.1 run** (10 Mana-TTS parts, sentence 1 at each checkpoint): [step 300](samples/progress_step0300.wav) · [step 600](samples/progress_step0600.wav) · [step 900](samples/progress_step0900.wav) · [step 1200](samples/progress_step1200.wav)
 
-The voice-clone sample uses a reference clip from GPTInformal-Persian (a second speaker). Full per-checkpoint log: [`docs/training_samples_index.jsonl`](docs/training_samples_index.jsonl).
+The voice-clone sample uses a reference clip from GPTInformal-Persian (a second speaker). Per-checkpoint logs: [v0.2](docs/training_samples_index.jsonl) · [v0.1](docs/training_samples_index_v0.1.jsonl).
 
-## 📊 Results (v0.1)
+## 📊 Results (v0.2)
 
 | | Value |
 |---|---|
-| Training data | 10 of 77 Mana-TTS parts (≈ 15 h before filtering; only HIGH-alignment clips of 1–20 s kept) + all 5 parts of GPTInformal-Persian (≈ 6 h) |
-| Training steps / epochs | 1257 optimizer steps / 3 epochs |
-| Hardware and training time | 1× TODO GPU on Google Colab, ≈ 2.2 h of training (≈ 6 s per step, including evaluation and sample generation) |
-| Eval loss (slow + fast AR, held-out) | 9.00 (step 300) → 8.82 (600) → 8.82 (900) → **8.80** (1200) |
-| Generation | All test sentences reached end-of-speech at every checkpoint (no run-on or truncated outputs) |
+| Training data | All 77 Mana-TTS parts (≈ 114 h before filtering; only HIGH-alignment clips of 1–20 s kept) + all 5 parts of GPTInformal-Persian (≈ 6 h) |
+| Training steps / epochs | 7000 optimizer steps / 2 epochs (effective batch 16) |
+| Hardware | 1× T4 on Google Colab (fp16 autocast), over several sessions resumed from Hub checkpoints |
+| Eval loss (slow + fast AR, held-out) | **8.00** at step 7000 (v0.1: 8.80). The two runs use different eval splits, so this is only a rough comparison. |
+| Generation | All test sentences reached end-of-speech at step 7000 (no run-on or truncated outputs) |
+| Listening impression | Intelligible Persian speech; prosody is still somewhat robotic. |
 | CER (Whisper ASR on generated speech) | not measured yet |
 | MOS (native listeners) | not measured yet |
-
-<!-- TODO: replace "TODO GPU" with the GPU name printed by the notebook (e.g. L4 or T4), and add one honest sentence on how the samples sound. If you changed any default setting (epochs, learning rate), update the table. -->
 
 
 ## ✨ What's in this repo
@@ -124,8 +123,8 @@ python scripts/synthesize.py --model ArminRahimi/Audio8-TTS-Persian --text "سل
 
 ## ⚠️ Limitations
 
-- **Training data:** v0.1 uses only 10 of 77 Mana-TTS parts (≈ 15 h) from essentially **one speaker**, plus ≈ 6 h of a second speaker (GPTInformal). Prosody and voice variety are limited, and cloning of unseen voices is weaker than in Audio8's officially supported languages.
-- **Compute:** a single Colab GPU for ≈ 2.2 hours (1257 steps). Training on all 114 h of Mana-TTS, longer schedules and hyperparameter search were not possible within this budget. The eval loss flattened after ~600 steps, so v0.1 is likely limited more by data and schedule than by convergence.
+- **Training data:** v0.2 uses all of Mana-TTS (≈ 114 h), but it is essentially **one speaker**, plus ≈ 6 h of a second speaker (GPTInformal). Prosody and voice variety are limited (prosody still sounds somewhat robotic), and cloning of unseen voices is weaker than in Audio8's officially supported languages.
+- **Compute:** a single Colab T4 (7000 steps, 2 epochs). Longer schedules and hyperparameter search were not possible within this budget.
 - **No phonemizer (G2P):** Persian script omits short vowels, so the model infers pronunciation from data. Homographs (e.g. کُرد / کَرد), the ezafe (-e) and rare words can be mispronounced.
 - **Text coverage:** numbers are expanded to words, but dates, abbreviations, Latin-script words and code-switching are not handled specially.
 - **Base model:** Audio8 TTS is a *Preview* checkpoint; Persian was never part of its pre-training.

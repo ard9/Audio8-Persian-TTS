@@ -18,7 +18,7 @@ tags:
   - custom_code
 ---
 
-# Audio8-TTS-Persian (v0.1)
+# Audio8-TTS-Persian (v0.2)
 
 A **Persian (Farsi)** fine-tune of [Audio8-TTS-Preview-0.6B](https://huggingface.co/Audio8/Audio8-TTS-Preview-0.6b), a 0.6B-parameter DualAR text-to-speech model with zero-shot voice cloning. Persian is not among the base model's supported languages; to our knowledge this is the first public Persian adaptation of Audio8.
 
@@ -71,33 +71,34 @@ Keep each input under ~150 characters; `scripts/synthesize.py` splits longer tex
 | | |
 |---|---|
 | Base model | Audio8-TTS-Preview-0.6B (repo commit `07e40f5`) |
-| Data | 10 of 77 Mana-TTS parts (≈ 15 h before filtering; HIGH alignment quality only, 1–20 s clips) + GPTInformal-Persian (≈ 6 h) |
+| Data | All 77 Mana-TTS parts (≈ 114 h before filtering; HIGH alignment quality only, 1–20 s clips) + GPTInformal-Persian (≈ 6 h) |
 | Reference conditioning | ~30% of Mana-TTS rows and 100% of GPTInformal rows trained with a same-speaker reference clip |
 | Trainable parameters | Both DualAR branches (slow + fast AR), all 601M parameters |
 | Optimizer | 8-bit AdamW, lr 3e-5, cosine schedule, 3% warmup, grad-norm clip 1.0 |
-| Precision | fp32 master weights + autocast (bf16 on L4/A100, fp16 on T4) |
-| Effective batch size | 16 (per-device batch × gradient accumulation, chosen from GPU memory) |
-| Steps / epochs | 1257 / 3 |
-| Hardware / time | 1× TODO GPU on Google Colab, ≈ 2.2 hours |
+| Precision | fp32 master weights + fp16 autocast (T4) |
+| Effective batch size | 16 (batch 2 × gradient accumulation 8) |
+| Steps / epochs | 7000 / 2 |
+| Hardware | 1× T4 on Google Colab, several sessions resumed from Hub checkpoints |
 | Exported weights | bf16 |
 
 ## Evaluation
 
 | Metric | Value |
 |---|---|
-| Eval loss (held-out, slow + fast AR) | 9.00 (step 300) → 8.80 (step 1200) |
+| Eval loss (held-out, slow + fast AR) | 8.00 at step 7000 (v0.1, trained on 10 parts: 8.80; different eval split) |
+| Listening impression | Intelligible Persian speech; prosody still somewhat robotic |
 | CER, Whisper transcription of generated speech | not measured yet |
 | MOS, native listeners | not measured yet |
 | Speaker similarity (voice cloning) | not measured yet |
 
 ## Limitations
 
-- **Small, mostly single-speaker data** (≈ 15 h Mana-TTS + ≈ 6 h GPTInformal). Voice variety and prosody are limited; cloning of unseen voices is weaker than in Audio8's supported languages.
-- **Limited compute** (≈ 2.2 GPU-hours on Colab); no hyperparameter search.
+- **Mostly single-speaker data** (≈ 114 h Mana-TTS from one speaker + ≈ 6 h GPTInformal). Voice variety and prosody are limited; cloning of unseen voices is weaker than in Audio8's supported languages.
+- **Limited compute** (a single Colab T4); no hyperparameter search.
 - **No G2P**: unwritten short vowels, homographs and the ezafe can be mispronounced.
 - Dates, abbreviations and Latin-script words are not specially normalized.
 - The base model is a Preview checkpoint without Persian pre-training.
-- TODO: issues you hear in the samples (e.g. mispronunciations, repetition, robotic prosody), or delete this line.
+- Prosody still sounds somewhat robotic.
 
 ## Responsible use
 

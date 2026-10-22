@@ -1,6 +1,6 @@
 # Samples
 
-v0.1 samples (step 1257) are already here. To refresh them after a new run:
+`base_*` are from the base model, `ft_*` and `clone_s01.wav` from the v0.2 run (step 7000), and `progress_step*` from the earlier v0.1 run (10 Mana-TTS parts). To refresh them after a new run:
 
 Put a few short demo files here (they are linked from the main README):
 
