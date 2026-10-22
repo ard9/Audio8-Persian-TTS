@@ -31,7 +31,7 @@ The voice-clone sample uses a reference clip from GPTInformal-Persian (a second 
 
 | | Value |
 |---|---|
-| Training data | All 77 Mana-TTS parts (≈ 114 h before filtering; only HIGH-alignment clips of 1–20 s kept) + all 5 parts of GPTInformal-Persian (≈ 6 h) |
+| Training data | 33 of 77 Mana-TTS parts + all 5 parts of GPTInformal-Persian: **31.6 h of audio** after filtering (only HIGH-alignment clips of 1–20 s kept) |
 | Training steps / epochs | 7000 optimizer steps / 2 epochs (effective batch 16) |
 | Hardware | 1× T4 on Google Colab (fp16 autocast), over several sessions resumed from Hub checkpoints |
 | Eval loss (slow + fast AR, held-out) | **8.00** at step 7000 (v0.1: 8.80). The two runs use different eval splits, so this is only a rough comparison. |
@@ -123,7 +123,7 @@ python scripts/synthesize.py --model ArminRahimi/Audio8-TTS-Persian --text "سل
 
 ## ⚠️ Limitations
 
-- **Training data:** v0.2 uses all of Mana-TTS (≈ 114 h), but it is essentially **one speaker**, plus ≈ 6 h of a second speaker (GPTInformal). Prosody and voice variety are limited (prosody still sounds somewhat robotic), and cloning of unseen voices is weaker than in Audio8's officially supported languages.
+- **Training data:** v0.2 uses 31.6 h after filtering (33 of 77 Mana-TTS parts + GPTInformal). Mana-TTS is essentially **one speaker**, and GPTInformal adds a second. Prosody and voice variety are limited (prosody still sounds somewhat robotic), and cloning of unseen voices is weaker than in Audio8's officially supported languages.
 - **Compute:** a single Colab T4 (7000 steps, 2 epochs). Longer schedules and hyperparameter search were not possible within this budget.
 - **No phonemizer (G2P):** Persian script omits short vowels, so the model infers pronunciation from data. Homographs (e.g. کُرد / کَرد), the ezafe (-e) and rare words can be mispronounced.
 - **Text coverage:** numbers are expanded to words, but dates, abbreviations, Latin-script words and code-switching are not handled specially.

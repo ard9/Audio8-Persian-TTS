@@ -71,7 +71,7 @@ Keep each input under ~150 characters; `scripts/synthesize.py` splits longer tex
 | | |
 |---|---|
 | Base model | Audio8-TTS-Preview-0.6B (repo commit `07e40f5`) |
-| Data | All 77 Mana-TTS parts (≈ 114 h before filtering; HIGH alignment quality only, 1–20 s clips) + GPTInformal-Persian (≈ 6 h) |
+| Data | 33 of 77 Mana-TTS parts + GPTInformal-Persian: 31.6 h of audio after filtering (HIGH alignment quality only, 1–20 s clips) |
 | Reference conditioning | ~30% of Mana-TTS rows and 100% of GPTInformal rows trained with a same-speaker reference clip |
 | Trainable parameters | Both DualAR branches (slow + fast AR), all 601M parameters |
 | Optimizer | 8-bit AdamW, lr 3e-5, cosine schedule, 3% warmup, grad-norm clip 1.0 |
@@ -93,7 +93,7 @@ Keep each input under ~150 characters; `scripts/synthesize.py` splits longer tex
 
 ## Limitations
 
-- **Mostly single-speaker data** (≈ 114 h Mana-TTS from one speaker + ≈ 6 h GPTInformal). Voice variety and prosody are limited; cloning of unseen voices is weaker than in Audio8's supported languages.
+- **Mostly single-speaker data** (31.6 h after filtering: 33 of 77 Mana-TTS parts from one speaker + GPTInformal). Voice variety and prosody are limited; cloning of unseen voices is weaker than in Audio8's supported languages.
 - **Limited compute** (a single Colab T4); no hyperparameter search.
 - **No G2P**: unwritten short vowels, homographs and the ezafe can be mispronounced.
 - Dates, abbreviations and Latin-script words are not specially normalized.
