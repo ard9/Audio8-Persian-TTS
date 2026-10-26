@@ -39,6 +39,23 @@ def fake_env(tmp_path, monkeypatch):
     def fake_download(repo, filename, target_dir):
         target_dir.mkdir(parents=True, exist_ok=True)
         rng = np.random.default_rng(sum(map(ord, filename)))
+        if filename.endswith("metadata.csv"):  # central-kurdish-tts4all layout: metadata.csv + wavs/<speaker>/
+            lines = ["file_name,text,speaker"]
+            for i in range(240):
+                speaker = ("fatih", "fatih", "shahen", "giganet")[i % 4]
+                text = f"ئەمە ڕستەی ژمارە {i} ە بۆ تاقیکردنەوە" if i % 9 else ""
+                lines.append(f'wavs/{speaker}/{speaker}_{i:03d}.wav,"{text}",{speaker}')
+            path = target_dir / "metadata.csv"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return path
+        if filename.endswith(".wav"):
+            import soundfile as sf
+
+            seconds = float(rng.uniform(0.5, 12))
+            path = target_dir / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(path, (rng.standard_normal(int(seconds * 24000)) * 0.1).astype(np.float32), 24000)
+            return path
         names, texts, audios, quality = [], [], [], []
         for i in range(24):
             seconds = float(rng.uniform(0.5, 12))

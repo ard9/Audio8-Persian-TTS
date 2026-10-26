@@ -40,6 +40,16 @@ DATASETS: dict[str, dict[str, Any]] = {
         "repo": "MahtaFetrat/GPTInformal-Persian",
         "files": [f"dataset/dataset_part_{i}.parquet" for i in range(1, 6)],
     },
+    # Central Kurdish (Sorani): 35 h, 3 speakers, 24 kHz WAV + metadata.csv, CC BY-NC-ND 4.0.
+    # It has no parquet parts, so its rows are split into 12 fixed parts (every 12th row),
+    # each holding all three speakers. Prepared data from it must stay in a private repo.
+    "ckb_tts4all": {
+        "repo": "aranemini/central-kurdish-tts4all",
+        "format": "csv_wav",
+        "lang": "ckb",
+        "metadata": "metadata.csv",
+        "files": [f"part_{i:02d}" for i in range(1, 13)],
+    },
 }
 
 
@@ -48,7 +58,7 @@ def log(message: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Persian text normalization (applied identically at training and test time)
+# Text normalization: Persian and Central Kurdish (same at training and test time)
 # ---------------------------------------------------------------------------
 
 _CHAR_MAP = str.maketrans(
@@ -115,9 +125,102 @@ def normalize_fa(text: Any) -> str:
     return text
 
 
-def split_sentences(text: str, max_chars: int = 150) -> list[str]:
+# Central Kurdish (Sorani). Sorani has its own letters (ە ڕ ڵ ۆ ێ ڤ), so the
+# Persian rules above must not be applied to it.
+_CKB_CHAR_MAP = str.maketrans(
+    {
+        "ي": "ی",
+        "ى": "ی",
+        "ك": "ک",
+        "ة": "ە",
+        "ھ": "ه",  # heh doachashmee -> heh, as in the KLPT normalizer
+        "«": '"',
+        "»": '"',
+        "٬": ",",
+        "٫": ".",
+        "–": "-",
+        "—": "-",
+    }
+)
+_CKB_ONES = ["سفر", "یەک", "دوو", "سێ", "چوار", "پێنج", "شەش", "حەوت", "هەشت", "نۆ",
+             "دە", "یازدە", "دوازدە", "سێزدە", "چواردە", "پازدە", "شازدە", "حەڤدە", "هەژدە", "نۆزدە"]
+_CKB_TENS = ["", "", "بیست", "سی", "چل", "پەنجا", "شەست", "حەفتا", "هەشتا", "نەوەد"]
+_CKB_SCALES = [(10**9, "ملیار"), (10**6, "ملیۆن"), (1000, "هەزار")]
+
+
+def _ckb_below_1000(n: int) -> str:
+    parts = []
+    hundreds, rest = divmod(n, 100)
+    if hundreds:
+        parts.append("سەد" if hundreds == 1 else f"{_CKB_ONES[hundreds]} سەد")
+    if rest >= 20:
+        tens, ones = divmod(rest, 10)
+        parts.append(_CKB_TENS[tens] if not ones else f"{_CKB_TENS[tens]} و {_CKB_ONES[ones]}")
+    elif rest:
+        parts.append(_CKB_ONES[rest])
+    return " و ".join(parts)
+
+
+def ckb_number_words(value: int) -> str:
+    """Sorani number words, e.g. 1402 -> هەزار و چوار سەد و دوو."""
+    if value == 0:
+        return _CKB_ONES[0]
+    parts = []
+    for scale, name in _CKB_SCALES:
+        count, value = divmod(value, scale)
+        if count:
+            parts.append(name if count == 1 and scale == 1000 else f"{ckb_number_words(count)} {name}")
+    if value:
+        parts.append(_ckb_below_1000(value))
+    return " و ".join(parts)
+
+
+def _ckb_int(value: str) -> str:
+    return ckb_number_words(int(value)) if len(value) <= 12 else " ".join(_CKB_ONES[int(d)] for d in value)
+
+
+def _ckb_number(match: re.Match[str]) -> str:
+    token = match.group()
+    if "," in token:
+        whole, _, rest = token.partition(",")
+        if len(rest) == 3:
+            return _ckb_int(whole + rest)
+        return f"{_ckb_int(whole)} ، {_ckb_int(rest)}"
+    if "." in token:
+        whole, _, frac = token.partition(".")
+        return f"{_ckb_int(whole)} پۆینت {_ckb_int(frac)}"
+    return _ckb_int(token)
+
+
+def normalize_ckb(text: Any) -> str:
+    """Light, deterministic Central Kurdish (Sorani) normalization for TTS input."""
+    text = unicodedata.normalize("NFC", str(text or ""))
+    text = text.translate(_CKB_CHAR_MAP).translate(_DIGITS)
+    text = text.replace("ه\u200c", "ە")  # old typing convention: heh + ZWNJ for the vowel ە
+    text = _DIACRITICS_RE.sub("", text)
+    text = _INVISIBLE_RE.sub("", text)
+    text = text.replace("ـ", "")  # tatweel
+    text = re.sub(r"(?<=\d)[,٬](?=\d{3}\b)", "", text)
+    text = re.sub(r"(\d+(?:[.,]\d+)?)\s*[%٪]", r" لەسەدا \1 ", text)
+    text = _NUMBER_RE.sub(lambda m: f" {_ckb_number(m)} ", text)
+    text = re.sub(r"\s+([،,.!?؟:;؛])", r"\1", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+NORMALIZERS: dict[str, Callable[[Any], str]] = {"fa": normalize_fa, "ckb": normalize_ckb}
+
+
+def normalize_text(text: Any, lang: str = "fa") -> str:
+    """Normalize with the rules of `lang` ("fa" = Persian, "ckb" = Central Kurdish)."""
+    if lang not in NORMALIZERS:
+        raise ValueError(f"unknown language {lang!r}; expected one of {sorted(NORMALIZERS)}")
+    return NORMALIZERS[lang](text)
+
+
+def split_sentences(text: str, max_chars: int = 150, lang: str = "fa") -> list[str]:
     """Split long input into chunks the model handles well (README: <=150 chars)."""
-    text = normalize_fa(text)
+    text = normalize_text(text, lang)
     if len(text) <= max_chars:
         return [text] if text else []
     pieces = re.split(r"(?<=[.!?؟؛])\s+", text)
@@ -264,18 +367,44 @@ contained here. As requested by the dataset authors, do not use this data to imi
 voices for malicious purposes.
 """
 
+DATA_CARD_CKB = """---
+license: cc-by-nc-nd-4.0
+language:
+  - ckb
+task_categories:
+  - text-to-speech
+tags:
+  - kurdish
+  - sorani
+  - central-kurdish
+  - audio8
+  - codec-codes
+pretty_name: central-kurdish-tts4all as Audio8 codec codes (private)
+---
+
+# Central Kurdish speech as Audio8 codec codes (private)
+
+Pre-encoded training data for the Central Kurdish (Sorani) notebook of
+[Audio8-Persian-TTS](https://github.com/ard9/Audio8-Persian-TTS), made from
+[aranemini/central-kurdish-tts4all](https://huggingface.co/datasets/aranemini/central-kurdish-tts4all).
+
+**Keep this repository private.** The source is licensed CC BY-NC-ND 4.0, which does not allow
+sharing modified versions; these codec codes can be decoded back to the original voices.
+"""
+
 
 class HubStore:
     """Keeps prepared data (dataset repo) and training checkpoints (model repo) on the Hub.
 
-    * data repo (public by default): ``shards/<shard>.tar``, ``refs.json``, ``refs/*.wav``
+    * data repo (public by default; private for data whose license forbids sharing it):
+      ``shards/<shard>.tar``, ``refs.json``, ``refs/*.wav``
     * training repo (private): ``runs/<run>/checkpoints/checkpoint-N``, ``runs/<run>/samples``,
       ``runs/<run>/manifests``. Only the newest checkpoint is kept and the git history is squashed
       so old weights do not keep using storage.
     """
 
     def __init__(self, data_repo: str, train_repo: str, token: str | None = None,
-                 data_private: bool = False, api: Any = None):
+                 data_private: bool = False, api: Any = None, data_card: str = DATA_CARD):
         if api is None:
             from huggingface_hub import HfApi
 
@@ -286,7 +415,10 @@ class HubStore:
         self.api = api
         self.data_repo = data_repo
         self.train_repo = train_repo
+        self.data_card = data_card
         self.api.create_repo(data_repo, repo_type="dataset", private=data_private, exist_ok=True)
+        if data_private and hasattr(self.api, "update_repo_settings"):  # an existing repo keeps its visibility
+            self.api.update_repo_settings(data_repo, repo_type="dataset", private=True)
         self.api.create_repo(train_repo, repo_type="model", private=True, exist_ok=True)
         self._data_files: set[str] | None = None
 
@@ -326,7 +458,7 @@ class HubStore:
 
     def ensure_data_card(self) -> None:
         if "README.md" not in self.data_files():
-            self.api.upload_file(path_or_fileobj=DATA_CARD.encode("utf-8"), path_in_repo="README.md",
+            self.api.upload_file(path_or_fileobj=self.data_card.encode("utf-8"), path_in_repo="README.md",
                                  repo_id=self.data_repo, repo_type="dataset", commit_message="Add dataset card")
             self.data_files().add("README.md")
 
@@ -405,6 +537,17 @@ class HubStore:
         return Path(output_dir) / name
 
 
+def pick_clone_reference(refs: list[dict[str, Any]], manifest_dir: str | Path) -> dict[str, Any] | None:
+    """A reference clip of a speaker other than the default voice (for the voice-clone test)."""
+    voices_file = Path(manifest_dir) / "voices.json"
+    default = json.loads(voices_file.read_text("utf-8"))["default"] if voices_file.is_file() else None
+    for ref in refs:
+        voice = f"{ref['dataset']}:{ref['speaker']}" if ref.get("speaker") else ref["dataset"]
+        if voice != default:
+            return ref
+    return None
+
+
 def load_refs(data_dir: str | Path) -> list[dict[str, Any]]:
     """refs.json with audio paths resolved for this machine (older files stored absolute paths)."""
     data_dir = Path(data_dir)
@@ -418,7 +561,7 @@ def load_refs(data_dir: str | Path) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Reading the Mana-TTS / GPTInformal parquet files
+# Reading the source datasets (parquet parts, or WAV files + metadata.csv)
 # ---------------------------------------------------------------------------
 
 
@@ -471,6 +614,37 @@ def iter_parquet_rows(path: Path, batch_rows: int = 32) -> Iterator[dict[str, An
             else:
                 row["audio"], row["samplerate"] = _decode_audio_cell(audio_col[i].as_py())
             yield row
+
+
+def _csv_part_rows(metadata: Path, part: str, parts: int) -> list[dict[str, str]]:
+    """Rows of one fixed part: sorted by file name, then every `parts`-th row."""
+    import csv
+
+    with metadata.open(encoding="utf-8-sig", newline="") as handle:
+        rows = [{_norm_col(k): (v or "").strip() for k, v in row.items() if k} for row in csv.DictReader(handle)]
+    if rows and not {"file_name", "text"} <= set(rows[0]):
+        raise ValueError(f"{metadata.name}: expected columns file_name,text[,speaker]; found {list(rows[0])}")
+    rows.sort(key=lambda r: r["file_name"])
+    index = int(re.sub(r"\D", "", part)) - 1
+    return rows[index::parts]
+
+
+def iter_csv_wav_rows(rows: list[dict[str, str]], audio_dir: Path) -> Iterator[dict[str, Any]]:
+    """Yield rows with keys: file_name, transcript, speaker, audio, samplerate."""
+    import soundfile as sf
+
+    for row in rows:
+        path = audio_dir / row["file_name"]
+        if not path.is_file():
+            continue
+        audio, rate = sf.read(str(path), dtype="float32", always_2d=True)
+        yield {
+            "file_name": Path(row["file_name"]).name,
+            "transcript": row["text"],
+            "speaker": row.get("speaker") or path.parent.name,
+            "audio": audio.mean(axis=1),
+            "samplerate": int(rate),
+        }
 
 
 def _decode_audio_cell(cell: Any) -> tuple[np.ndarray, int]:
@@ -629,7 +803,7 @@ def prepare_shard(
     refs: list[dict[str, Any]],
     hub: HubStore | None = None,
 ) -> dict[str, float]:
-    """Download one parquet part, encode it, and store a tar in data_dir (and on the Hub)."""
+    """Download one dataset part, encode it, and store a tar in data_dir (and on the Hub)."""
     import soundfile as sf
 
     shard = _shard_name(dataset, filename)
@@ -650,63 +824,86 @@ def prepare_shard(
 
     started = time.time()
     spec = DATASETS[dataset]
-    parquet = _download(spec["repo"], filename, work_dir / "downloads")
+    lang = spec.get("lang", "fa")
+    if spec.get("format") == "csv_wav":
+        source_dir = work_dir / "downloads" / dataset
+        metadata = _download(spec["repo"], spec["metadata"], source_dir)
+        part_rows = _csv_part_rows(metadata, filename, len(spec["files"]))
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(lambda r: _download(spec["repo"], r["file_name"], source_dir), part_rows))
+        source_rows = iter_csv_wav_rows(part_rows, source_dir)
+
+        def cleanup() -> None:
+            for r in part_rows:
+                (source_dir / r["file_name"]).unlink(missing_ok=True)
+    else:
+        parquet = _download(spec["repo"], filename, work_dir / "downloads")
+        source_rows = iter_parquet_rows(parquet)
+
+        def cleanup() -> None:
+            parquet.unlink(missing_ok=True)
     codes_rel = Path("codes") / shard
     (work_dir / codes_rel).mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     skipped = {"quality": 0, "length": 0, "text": 0, "encode": 0}
-    pending: list[tuple[str, str, np.ndarray]] = []
+    pending: list[tuple[str, str, str | None, np.ndarray]] = []
     stem_tag = re.sub(r"\D", "", Path(filename).stem) or Path(filename).stem
-    ref_count = sum(1 for r in refs if r["dataset"] == dataset)
     seen_ids: set[str] = set()
 
+    def ref_count(speaker: str | None) -> int:
+        return sum(1 for r in refs if r["dataset"] == dataset and r.get("speaker") == speaker)
+
     def flush() -> None:
-        nonlocal ref_count
         if not pending:
             return
-        pending.sort(key=lambda item: item[2].size)
-        batches: list[list[tuple[str, str, np.ndarray]]] = [[]]
+        pending.sort(key=lambda item: item[3].size)
+        batches: list[list[tuple[str, str, str | None, np.ndarray]]] = [[]]
         total = 0
         for item in pending:
-            if batches[-1] and total + item[2].size > options.batch_seconds * CODEC_SAMPLE_RATE:
+            if batches[-1] and total + item[3].size > options.batch_seconds * CODEC_SAMPLE_RATE:
                 batches.append([])
                 total = 0
             batches[-1].append(item)
-            total += item[2].size
+            total += item[3].size
         for batch in batches:
-            encoded = encoder().encode([wave for _, _, wave in batch])
-            for (sample_id, text, wave), codes in zip(batch, encoded):
+            encoded = encoder().encode([wave for _, _, _, wave in batch])
+            for (sample_id, text, speaker, wave), codes in zip(batch, encoded):
                 if codes is None:
                     skipped["encode"] += 1
                     continue
                 rel = codes_rel / f"{sample_id}.npy"
                 np.save(work_dir / rel, codes)
                 seconds = wave.size / CODEC_SAMPLE_RATE
-                rows.append(
-                    {
-                        "id": sample_id,
-                        "dataset": dataset,
-                        "text": text,
-                        "target_codes": rel.as_posix(),
-                        "frames": int(codes.shape[1]),
-                        "seconds": round(seconds, 3),
-                    }
-                )
-                if ref_count < options.refs_per_dataset and 4.0 <= seconds <= 9.0:
+                row = {
+                    "id": sample_id,
+                    "dataset": dataset,
+                    "text": text,
+                    "target_codes": rel.as_posix(),
+                    "frames": int(codes.shape[1]),
+                    "seconds": round(seconds, 3),
+                }
+                if speaker:  # multi-speaker datasets; references are paired per speaker
+                    row["speaker"] = speaker
+                rows.append(row)
+                if ref_count(speaker) < options.refs_per_dataset and 4.0 <= seconds <= 9.0:
                     ref_dir = data_dir / "refs"
                     ref_dir.mkdir(parents=True, exist_ok=True)
                     ref_path = ref_dir / f"{sample_id}.wav"
                     sf.write(ref_path, wave, CODEC_SAMPLE_RATE)
-                    refs.append({"dataset": dataset, "id": sample_id, "text": text, "audio": f"refs/{ref_path.name}"})
-                    ref_count += 1
+                    ref = {"dataset": dataset, "id": sample_id, "text": text, "audio": f"refs/{ref_path.name}"}
+                    if speaker:
+                        ref["speaker"] = speaker
+                    refs.append(ref)
         pending.clear()
 
-    for row in iter_parquet_rows(parquet):
+    for row in source_rows:
         quality = str(row.get("match_quality") or "").upper()
         if options.only_high_quality and quality and quality != "HIGH":
             skipped["quality"] += 1
             continue
-        text = normalize_fa(row.get("transcript"))
+        text = normalize_text(row.get("transcript"), lang)
         if len(text) < 2:
             skipped["text"] += 1
             continue
@@ -719,7 +916,7 @@ def prepare_shard(
         if sample_id in seen_ids:
             sample_id = f"{sample_id}_{len(seen_ids)}"
         seen_ids.add(sample_id)
-        pending.append((sample_id, text, _to_codec_rate(row["audio"], rate)))
+        pending.append((sample_id, text, row.get("speaker"), _to_codec_rate(row["audio"], rate)))
         if len(pending) >= 96:
             flush()
     flush()
@@ -738,7 +935,7 @@ def prepare_shard(
     local_tar.unlink(missing_ok=True)
     if hub is not None:
         hub.upload_data(tar_cached, hub_path)
-    parquet.unlink(missing_ok=True)
+    cleanup()
     hours = sum(r["seconds"] for r in rows) / 3600
     return {
         "status": "prepared",
@@ -757,7 +954,7 @@ def prepare_all(
     options: PrepOptions | None = None,
     hub: HubStore | None = None,
 ) -> None:
-    """plan maps dataset name -> number of parquet parts to use (from the start).
+    """plan maps dataset name -> number of dataset parts to use (from the start).
 
     data_dir is a local cache with one .tar per prepared part.
     With a HubStore, parts already on the Hub are downloaded instead of re-encoded, and newly
@@ -816,6 +1013,7 @@ def build_manifests(
     eval_size: int = 200,
     reference_prob: float = 0.3,
     always_reference: tuple[str, ...] = ("gptinformal",),
+    default_voice: str | None = None,
     seed: int = 1234,
     rebuild: bool = False,
     manifest_dir: str | Path | None = None,
@@ -828,6 +1026,12 @@ def build_manifests(
     of the same speaker, so the default (no-reference) voice stays Mana's while
     the model also learns Persian voice cloning. The manifests are stored on
     on the Hub and reused, keeping the sample order identical across sessions.
+
+    References are always from the same speaker: rows are grouped by their
+    ``speaker`` field (multi-speaker datasets) or by dataset. ``default_voice``
+    picks the only group trained without references ("auto" = the group with the
+    most audio); every other group always gets one, so the voice used when no
+    reference is given stays a single speaker.
     """
     import torch
 
@@ -837,7 +1041,10 @@ def build_manifests(
     work_dir, data_dir = Path(work_dir), Path(data_dir)
     manifests_dir = Path(manifest_dir) if manifest_dir else data_dir / "manifests"
     train_path, eval_path = work_dir / "train.jsonl", work_dir / "eval.jsonl"
-    plan_key = json.dumps({"plan": plan, "max_length": max_length, "ref": reference_prob}, sort_keys=True)
+    key: dict[str, Any] = {"plan": plan, "max_length": max_length, "ref": reference_prob}
+    if default_voice is not None:  # left out otherwise, so existing Persian manifests are reused
+        key["default_voice"] = default_voice
+    plan_key = json.dumps(key, sort_keys=True)
     plan_file = manifests_dir / "plan.json"
     if hub is not None and run and not rebuild and not plan_file.is_file():
         hub.pull_run_files(run, "manifests", manifests_dir)
@@ -865,13 +1072,20 @@ def build_manifests(
     tokenizer = load_processor(base_dir).tokenizer
     config = load_config(base_dir)
     rng = random.Random(seed)
-    by_dataset: dict[str, list[dict[str, Any]]] = {}
+    by_voice: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        by_dataset.setdefault(row["dataset"], []).append(row)
+        voice = f"{row['dataset']}:{row['speaker']}" if row.get("speaker") else row["dataset"]
+        by_voice.setdefault(voice, []).append(row)
     candidates = {
         name: [r for r in items if 3 * FRAMES_PER_SECOND <= r["frames"] <= 9 * FRAMES_PER_SECOND]
-        for name, items in by_dataset.items()
+        for name, items in by_voice.items()
     }
+    if default_voice == "auto":
+        default_voice = max(by_voice, key=lambda v: sum(r["seconds"] for r in by_voice[v]))
+    if default_voice is not None:
+        if default_voice not in by_voice:
+            raise ValueError(f"default_voice {default_voice!r} not found; voices: {sorted(by_voice)}")
+        log(f"voices: {sorted(by_voice)}; default (no reference): {default_voice}")
 
     def fits(row: dict[str, Any], ref: dict[str, Any] | None) -> bool:
         try:
@@ -890,10 +1104,14 @@ def build_manifests(
 
     final_rows: list[dict[str, Any]] = []
     dropped = 0
-    for name in sorted(by_dataset):
-        prob = 1.0 if name in always_reference else reference_prob
+    no_reference = 0
+    for name in sorted(by_voice):
+        if default_voice is not None:
+            prob = reference_prob if name == default_voice else 1.0
+        else:
+            prob = 1.0 if name in always_reference else reference_prob
         pool = candidates.get(name) or []
-        for row in by_dataset[name]:
+        for row in by_voice[name]:
             ref = None
             if pool and rng.random() < prob:
                 for _ in range(5):
@@ -903,6 +1121,9 @@ def build_manifests(
                         break
             if ref is not None and not fits(row, ref):
                 ref = None
+            if ref is None and default_voice is not None and name != default_voice:
+                no_reference += 1  # would leak this speaker into the default (no-reference) voice
+                continue
             if ref is None and not fits(row, None):
                 dropped += 1
                 continue
@@ -922,12 +1143,16 @@ def build_manifests(
     shutil.copyfile(train_path, manifests_dir / "train.jsonl")
     shutil.copyfile(eval_path, manifests_dir / "eval.jsonl")
     plan_file.write_text(plan_key, "utf-8")
+    if default_voice is not None:
+        (manifests_dir / "voices.json").write_text(
+            json.dumps({"default": default_voice, "voices": sorted(by_voice)}, ensure_ascii=False), "utf-8")
     if hub is not None and run:
         hub.push_run_files(run, manifests_dir, "manifests")
     with_ref = sum(1 for r in final_rows if "reference_codes" in r)
     log(
         f"manifests: train={len(train_rows)} eval={len(eval_rows)} "
         f"with_reference={with_ref} dropped_too_long={dropped}"
+        + (f" dropped_no_reference={no_reference}" if no_reference else "")
     )
     del tokenizer
     torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -973,11 +1198,12 @@ def synthesize(
     top_p: float = 0.95,
     top_k: int = 50,
     seed: int | None = 1234,
+    lang: str = "fa",
 ) -> tuple[np.ndarray, int, bool]:
     """Generate one waveform. Long text is split into chunks and joined."""
     import torch
 
-    chunks = split_sentences(text)
+    chunks = split_sentences(text, lang=lang)
     if not chunks:
         raise ValueError("text is empty after normalization")
     device = next(model.parameters()).device
@@ -991,7 +1217,7 @@ def synthesize(
             if reference_audio:
                 kwargs.update(
                     reference_audio=[str(reference_audio)],
-                    reference_text=[normalize_fa(reference_text or "")],
+                    reference_text=[normalize_text(reference_text or "", lang)],
                 )
             inputs = processor(**kwargs)
             inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
@@ -1038,6 +1264,7 @@ def write_samples(
     reference: dict[str, Any] | None,
     max_frames: int,
     title: str,
+    lang: str = "fa",
 ) -> list[dict[str, Any]]:
     import soundfile as sf
 
@@ -1055,6 +1282,7 @@ def write_samples(
             reference_audio=ref["audio"] if ref else None,
             reference_text=ref["text"] if ref else None,
             max_frames=max_frames,
+            lang=lang,
         )
         path = out_dir / f"{name}.wav"
         sf.write(path, audio, rate)
@@ -1178,6 +1406,7 @@ class TrainConfig:
     freeze_slow_ar: bool = False
     optim: str = "adamw_8bit"
     test_sentences: tuple[str, ...] = ()
+    lang: str = "fa"  # text normalization for the test sentences: "fa" or "ckb"
     clone_reference: dict[str, Any] | None = None
     sample_max_frames: int = 500
     logging_steps: int = 20
@@ -1186,6 +1415,23 @@ class TrainConfig:
     hub: Any = None  # HubStore: back up every checkpoint and the samples to the Hub
     hub_run: str | None = None
     hub_keep: int = 1
+
+
+def gpu_memory_stats(reset_peak: bool = False) -> dict[str, float]:
+    """GPU memory in GB: in use now, peak since the last reset, and reserved by PyTorch (what nvidia-smi shows)."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return {}
+    gb = 1024**3
+    stats = {
+        "gpu_mem_alloc_gb": round(torch.cuda.memory_allocated() / gb, 2),
+        "gpu_mem_peak_gb": round(torch.cuda.max_memory_allocated() / gb, 2),
+        "gpu_mem_reserved_gb": round(torch.cuda.memory_reserved() / gb, 2),
+    }
+    if reset_peak:
+        torch.cuda.reset_peak_memory_stats()
+    return stats
 
 
 def _resolve_training_settings(cfg: TrainConfig) -> dict[str, Any]:
@@ -1304,7 +1550,7 @@ def train(cfg: TrainConfig) -> Path | None:
                 try:
                     records = write_samples(
                         core, processor, samples_dir / f"step_{step:07d}", list(cfg.test_sentences),
-                        reference, cfg.sample_max_frames, header,
+                        reference, cfg.sample_max_frames, header, lang=cfg.lang,
                     )
                 except Exception as exc:  # samples must never stop training
                     log(f"sample generation failed at step {step}: {type(exc).__name__}: {exc}")
@@ -1328,6 +1574,27 @@ def train(cfg: TrainConfig) -> Path | None:
             log(f"checkpoint-{step} saved" + (f"; removed local {removed}" if removed else ""))
             return control
 
+    class GpuMemoryLogger(TrainerCallback):
+        """Adds VRAM usage to every log line (and TensorBoard) and prints the peak at each checkpoint."""
+
+        def __init__(self):
+            self.run_peak = 0.0
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            stats = gpu_memory_stats(reset_peak=True)
+            if stats and logs is not None:
+                logs.update(stats)
+                self.run_peak = max(self.run_peak, stats["gpu_mem_peak_gb"])
+
+        def on_save(self, args, state, control, **kwargs):
+            stats = gpu_memory_stats()
+            if stats:
+                import torch
+
+                total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                peak = max(self.run_peak, stats["gpu_mem_peak_gb"])
+                log(f"peak VRAM so far {peak:.1f} / {total:.1f} GB (reserved now {stats['gpu_mem_reserved_gb']:.1f} GB)")
+
     trainer = sft.Audio8TTSTrainer(
         model=model,
         args=args,
@@ -1341,6 +1608,9 @@ def train(cfg: TrainConfig) -> Path | None:
     # forward() takes **kwargs, so Trainer assumes the loss is already normalized
     # for gradient accumulation; the repo's loss is a plain mean, so turn that off.
     trainer.model_accepts_loss_kwargs = False
+    # First in the list, so the memory numbers are already in `logs` when the
+    # TensorBoard and progress callbacks run.
+    trainer.callback_handler.callbacks.insert(0, GpuMemoryLogger())
 
     steps_per_epoch = math.ceil(len(train_dataset) / (settings["batch_size"] * settings["grad_accum"]))
     total_steps = math.ceil(steps_per_epoch * cfg.epochs)
@@ -1433,7 +1703,7 @@ def export_model(base_dir: str | Path, checkpoint: str | Path, export_dir: str |
     base_dir, export_dir = Path(base_dir), Path(export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)
     for item in base_dir.iterdir():
-        if item.is_file() and item.name != "model.safetensors" and not item.name.startswith("."):
+        if item.is_file() and item.name not in {"model.safetensors", "README.md", "NOTICE"} and not item.name.startswith("."):
             target = export_dir / item.name
             if not target.is_file() or target.stat().st_size != item.stat().st_size:
                 shutil.copyfile(item, target)

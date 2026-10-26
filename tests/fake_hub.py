@@ -9,12 +9,18 @@ class FakeHfApi:
     def __init__(self, root: Path):
         self.root = Path(root)
         self.squashed = 0
+        self.private = {}
 
     def _repo(self, repo_id, repo_type):
         return self.root / (repo_type or "model") / repo_id
 
     def create_repo(self, repo_id, repo_type=None, private=False, exist_ok=False):
         self._repo(repo_id, repo_type).mkdir(parents=True, exist_ok=True)
+        self.private.setdefault((repo_type or "model", repo_id), private)
+
+    def update_repo_settings(self, repo_id, repo_type=None, private=None):
+        if private is not None:
+            self.private[(repo_type or "model", repo_id)] = private
 
     def list_repo_files(self, repo_id, repo_type=None):
         base = self._repo(repo_id, repo_type)

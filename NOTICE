@@ -19,3 +19,11 @@ Training data (not redistributed here):
   GPTInformal-Persian, CC0-1.0, https://huggingface.co/datasets/MahtaFetrat/GPTInformal-Persian
   The dataset authors ask that the data not be used to replicate or imitate
   the speakers' voices for malicious purposes.
+
+Central Kurdish (Sorani) model (separate notebook and model repo):
+  central-kurdish-tts4all, CC BY-NC-ND 4.0,
+  https://huggingface.co/datasets/aranemini/central-kurdish-tts4all
+  Audiobook content used with the permission of Malaka Mustafa Soltani;
+  voices by Shahen Shahlai and Fatih. The prepared data is not redistributed,
+  and the Central Kurdish model is released for non-commercial use only
+  (CC BY-NC 4.0).

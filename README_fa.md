@@ -56,12 +56,21 @@
 
 این مدل می‌تواند صدای افراد را تقلید کند. فقط با رضایت صریح صاحب صدا آن را کلون کنید و صدای مصنوعی را به‌وضوح اعلام کنید. استفاده برای جعل هویت، کلاهبرداری یا انتشار اطلاعات نادرست ممنوع است.
 
+## 🟢 کردی سورانی
+
+یک نوت‌بوک جدا برای کردی سورانی هم هست: [`notebooks/Audio8_Kurdish_Sorani_Finetune.ipynb`](notebooks/Audio8_Kurdish_Sorani_Finetune.ipynb). داده‌اش [central-kurdish-tts4all](https://huggingface.co/datasets/aranemini/central-kurdish-tts4all) است: حدود ۳۵ ساعت گفتار خوانده‌شده از ۳ گوینده.
+
+- **نقطه‌ی شروع:** با `INIT_MODEL = "persian"` آموزش از مدل فارسی شروع می‌شود، چون خط سورانی و فارسی خیلی شبیه‌اند. با `"base"` از Audio8 اصلی شروع می‌شود. برای مقایسه، برای هر کدام `RUN_NAME` جدا بگذارید.
+- **متن:** تابع `normalize_ckb` حروف سورانی (ە ڕ ڵ ۆ ێ ڤ) را نگه می‌دارد و اعداد را به کردی می‌نویسد.
+- **⚠️ غیرتجاری:** مجوز دیتاست CC BY-NC-ND 4.0 است. داده‌ی آماده‌شده در مخزن **خصوصی** می‌ماند و مدل فقط برای استفاده‌ی غیرتجاری (CC BY-NC 4.0) منتشر می‌شود.
+
 ## 🙏 قدردانی و منابع
 
 - **Audio8 TTS** (مدل پایه، Apache-2.0): [GitHub](https://github.com/Edge0-AI/Audio8_TTS) · [Hugging Face](https://huggingface.co/Audio8/Audio8-TTS-Preview-0.6b)
 - **Fish Speech** (معماری DualAR): [GitHub](https://github.com/fishaudio/fish-speech)
 - **Mana-TTS** (۱۱۴ ساعت، CC0، از ماهنامه‌ی «نسل مانا» جامعه‌ی نابینایان ایران): [دیتاست](https://huggingface.co/datasets/MahtaFetrat/Mana-TTS) · [مقاله](https://aclanthology.org/2025.naacl-long.464/)
 - **GPTInformal-Persian** (۶ ساعت، CC0): [دیتاست](https://huggingface.co/datasets/MahtaFetrat/GPTInformal-Persian)
+- **central-kurdish-tts4all** (حدود ۳۵ ساعت کردی سورانی، CC BY-NC-ND 4.0): [دیتاست](https://huggingface.co/datasets/aranemini/central-kurdish-tts4all)
 
 برای ارجاع (citation) به [README انگلیسی](README.md#-citation) مراجعه کنید.
 

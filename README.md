@@ -46,11 +46,12 @@ The voice-clone sample uses a reference clip from GPTInformal-Persian (a second 
 | Path | What it is |
 |---|---|
 | [`notebooks/Audio8_Persian_Finetune.ipynb`](notebooks/Audio8_Persian_Finetune.ipynb) | One-click Colab notebook: data preparation, training, per-checkpoint audio samples, testing, export and upload to Hugging Face. |
+| [`notebooks/Audio8_Kurdish_Sorani_Finetune.ipynb`](notebooks/Audio8_Kurdish_Sorani_Finetune.ipynb) | The same notebook for Central Kurdish (Sorani); see [below](#-central-kurdish-sorani). |
 | [`src/fa_tools.py`](src/fa_tools.py) | All the logic the notebook uses (embedded into it with `%%writefile`). |
 | [`scripts/synthesize.py`](scripts/synthesize.py) | Command-line inference from an exported model, a Hugging Face ID, or a raw checkpoint. |
 | [`scripts/upload_to_hf.py`](scripts/upload_to_hf.py) | Publishes an exported model and its model card to the Hugging Face Hub. |
-| [`scripts/build_notebook.py`](scripts/build_notebook.py) | Rebuilds the notebook from `src/fa_tools.py`. |
-| [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) | Hugging Face model card template. |
+| [`scripts/build_notebook.py`](scripts/build_notebook.py) | Rebuilds both notebooks from `src/fa_tools.py`. |
+| [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) · [`docs/MODEL_CARD_ckb.md`](docs/MODEL_CARD_ckb.md) | Hugging Face model cards (Persian, Central Kurdish). |
 | [`docs/PUBLISHING.md`](docs/PUBLISHING.md) | Step-by-step checklist for GitHub and Hugging Face releases. |
 | [`tests/`](tests) | CPU end-to-end test of the whole pipeline with a tiny stand-in model. |
 
@@ -63,6 +64,19 @@ The voice-clone sample uses a reference clip from GPTInformal-Persian (a second 
 5. If the session ends, run **Run all** again — on the same or another machine (Colab or Kaggle). Training resumes from the last checkpoint stored on the Hub.
 
 Default settings train on all 77 parts of Mana-TTS (≈ 114 h). Use `MANA_PARTS = 10` (≈ 15 h) for a quick test.
+
+## 🟢 Central Kurdish (Sorani)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ard9/Audio8-Persian-TTS/blob/main/notebooks/Audio8_Kurdish_Sorani_Finetune.ipynb)
+
+The same pipeline, for Central Kurdish, trained on [central-kurdish-tts4all](https://huggingface.co/datasets/aranemini/central-kurdish-tts4all) (≈ 35 h of read speech, 3 speakers, 24 kHz).
+
+- **Starting point:** `INIT_MODEL = "persian"` starts from [Audio8-TTS-Persian](https://huggingface.co/ArminRahimi/Audio8-TTS-Persian), since Sorani and Persian share most of their script; `"base"` starts from the original Audio8. Use a different `RUN_NAME` for each to compare them.
+- **Text:** `normalize_ckb()` keeps the Sorani letters (ە ڕ ڵ ۆ ێ ڤ), unifies Arabic letter variants and spells numbers out in Kurdish (`١٤٠٢` → «هەزار و چوار سەد و دوو»).
+- **Voices:** the speaker with the most audio is the default voice (no reference clip); the other two are always trained with a same-speaker reference, so the model learns voice cloning without mixing voices.
+- **⚠️ Non-commercial:** the dataset is CC BY-NC-ND 4.0. The notebook keeps the prepared data in a **private** repo, and the model card ([`docs/MODEL_CARD_ckb.md`](docs/MODEL_CARD_ckb.md)) releases the weights under **CC BY-NC 4.0** (research, education and non-commercial use only).
+
+Other Central Kurdish TTS data: [SoraniTTS](https://data.mendeley.com/datasets/jmtn248cc9/5) (≈ 19 h, one speaker, CC BY 4.0) would allow a commercially usable model, but it is not on the Hugging Face Hub.
 
 ### Storage
 
@@ -150,6 +164,7 @@ This model can imitate voices. Only clone a voice with the speaker's explicit co
 - **Fish Audio S2 Pro / Fish Speech** — the DualAR architecture Audio8 builds on: [GitHub](https://github.com/fishaudio/fish-speech)
 - **Mana-TTS** — 114 h single-speaker Persian corpus (CC0), from the *Nasl-e-Mana* magazine of Iran's blind community: [dataset](https://huggingface.co/datasets/MahtaFetrat/Mana-TTS) · [paper](https://aclanthology.org/2025.naacl-long.464/)
 - **GPTInformal-Persian** — 6 h informal Persian speech (CC0): [dataset](https://huggingface.co/datasets/MahtaFetrat/GPTInformal-Persian)
+- **central-kurdish-tts4all** — ≈ 35 h Central Kurdish speech, 3 speakers (CC BY-NC-ND 4.0): [dataset](https://huggingface.co/datasets/aranemini/central-kurdish-tts4all)
 - **Hugging Face Transformers**, **bitsandbytes**, **num2fawords**
 
 Related Persian TTS work: [ParsVoice](https://arxiv.org/abs/2510.10774), [Persian Tacotron2 on ManaTTS](https://huggingface.co/MahtaFetrat/Persian-Tacotron2-on-ManaTTS), [ParsVoice-XTTS](https://huggingface.co/MohammadJRanjbar/ParsVoice-XTTS), [Chatterbox-TTS-Persian](https://huggingface.co/Thomcles/Chatterbox-TTS-Persian-Farsi), [Persian-tts-coqui](https://github.com/karim23657/Persian-tts-coqui).
@@ -188,3 +203,5 @@ If you use this work, please cite it together with Audio8 TTS and the datasets:
 ## 📄 License
 
 Code in this repository: [Apache License 2.0](LICENSE). The fine-tuned weights are a derivative of Audio8 TTS (Apache-2.0); see [NOTICE](NOTICE). Training data: Mana-TTS and GPTInformal-Persian (CC0-1.0).
+
+The Central Kurdish model is trained on central-kurdish-tts4all (CC BY-NC-ND 4.0) and is released for **non-commercial use only** (CC BY-NC 4.0).
